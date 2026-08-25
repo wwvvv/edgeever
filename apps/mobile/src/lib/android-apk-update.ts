@@ -1,5 +1,8 @@
 import type { MobileRelease } from "./mobile-release";
-import { installAndroidApk } from "../../modules/edgeever-app-installer";
+
+const APK_MIME_TYPE = "application/vnd.android.package-archive";
+const ACTION_VIEW = "android.intent.action.VIEW";
+const FLAG_GRANT_READ_URI_PERMISSION = 1;
 
 export type AndroidApkDownloadProgress = {
   downloadedBytes: number;
@@ -7,21 +10,17 @@ export type AndroidApkDownloadProgress = {
   totalBytes: number;
 };
 
-export const downloadAndroidApk = async (
+export const downloadAndInstallAndroidApk = async (
   release: MobileRelease,
-  onProgress: (progress: AndroidApkDownloadProgress) => void
+  onProgress: (progress: AndroidApkDownloadProgress) => void,
+  onDownloaded: () => void
 ) => {
-  const { File, Paths } = await import("expo-file-system");
+  const [{ File, Paths }, LegacyFileSystem, IntentLauncher] = await Promise.all([
+    import("expo-file-system"),
+    import("expo-file-system/legacy"),
+    import("expo-intent-launcher"),
+  ]);
   const destination = new File(Paths.cache, release.fileName);
-
-  if (destination.exists && destination.size === release.size) {
-    onProgress({ downloadedBytes: release.size, progress: 1, totalBytes: release.size });
-    return destination.uri;
-  }
-
-  if (destination.exists) {
-    destination.delete();
-  }
 
   try {
     const downloadedFile = await File.downloadFileAsync(release.downloadUrl, destination, {
@@ -41,18 +40,17 @@ export const downloadAndroidApk = async (
     }
 
     onProgress({ downloadedBytes: release.size, progress: 1, totalBytes: release.size });
-    return downloadedFile.uri;
+    onDownloaded();
+    const contentUri = await LegacyFileSystem.getContentUriAsync(downloadedFile.uri);
+    await IntentLauncher.startActivityAsync(ACTION_VIEW, {
+      data: contentUri,
+      flags: FLAG_GRANT_READ_URI_PERMISSION,
+      type: APK_MIME_TYPE,
+    });
   } catch (error) {
     if (destination.exists) {
       destination.delete();
     }
     throw error;
-  }
-};
-
-export const installDownloadedAndroidApk = async (fileUri: string) => {
-  const installerOpened = await installAndroidApk(fileUri);
-  if (!installerOpened) {
-    throw new Error("Permission to install apps was not granted");
   }
 };
